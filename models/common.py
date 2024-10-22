@@ -30,6 +30,131 @@ from utils.general import (LOGGER, ROOT, Profile, check_requirements, check_suff
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import copy_attr, smart_inference_mode
 
+def channel_shuffle(x, groups):
+    batchsize, num_channels, height, width = x.size()
+    channels_per_group = num_channels // groups
+
+    # reshape
+    x = x.view(batchsize, groups, channels_per_group, height, width)
+
+    x = torch.transpose(x, 1, 2).contiguous()
+
+    # flatten
+    x = x.view(batchsize, num_channels, height, width)
+
+    return x
+class conv_bn_relu_maxpool(nn.Module):
+    def __init__(self, ch_in, ch_out):
+        super(conv_bn_relu_maxpool, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(ch_in, ch_out, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(ch_out),
+            nn.ReLU(inplace=True)
+        )
+
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, bias=False)
+        
+
+
+class InvertedResidual(nn.Module):
+    def __init__(self, inp, oup, stride) :
+        super().__init__()
+
+        if not (1 <= stride <= 3):
+            raise ValueError("illegal stride value")
+        self.stride = stride
+
+        branch_features = oup // 2
+
+        if self.stride > 1:
+            self.branch1 = nn.Sequential(
+                self.depthwise_conv(inp, inp, kernel_size=3, stride=self.stride, padding=1),
+                nn.BatchNorm2d(inp),
+                nn.Conv2d(inp, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(branch_features),
+                nn.ReLU(inplace=True),
+            )
+        else:
+            self.branch1 = nn.Sequential()
+
+        self.branch2 = nn.Sequential(
+            nn.Conv2d(
+                inp if (self.stride > 1) else branch_features,
+                branch_features,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=False,
+            ),
+            nn.BatchNorm2d(branch_features),
+            nn.ReLU(inplace=True),
+            self.depthwise_conv(branch_features, branch_features, kernel_size=3, stride=self.stride, padding=1),
+            nn.BatchNorm2d(branch_features),
+            nn.Conv2d(branch_features, branch_features, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(branch_features),
+            nn.ReLU(inplace=True),
+        )
+
+    @staticmethod
+    def depthwise_conv(
+        i: int, o: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = False
+    ) -> nn.Conv2d:
+        return nn.Conv2d(i, o, kernel_size, stride, padding, bias=bias, groups=i)
+
+    def forward(self, x):
+        if self.stride == 1:
+            x1, x2 = x.chunk(2, dim=1)
+            out = torch.cat((x1, self.branch2(x2)), dim=1)
+        else:
+            out = torch.cat((self.branch1(x), self.branch2(x)), dim=1)
+
+        out = channel_shuffle(out, 2)
+
+        return out
+
+class ShuffleNetV2(nn.Module):
+    def __init__(self,num_classes=1000):
+        super(ShuffleNetV2, self).__init__()
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(3, 24, 3, 2, 1, bias=False),
+            nn.BatchNorm2d(24),
+            nn.ReLU(inplace=True),
+        )
+        
+
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        # Static annotations for mypy
+        self.stage2 =self._make_stage(24,48,3)
+        self.stage3 =self._make_stage(48,96,7)
+        self.stage4 =self._make_stage(96,192,3)
+        
+
+        self.conv5 = nn.Sequential(
+            nn.Conv2d(192,1024, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(inplace=True),
+        )
+
+        self.fc = nn.Linear(1024, num_classes)
+
+    def forward(self, x):
+        # See note [TorchScript super()]
+        x = self.conv1(x)
+        x = self.maxpool(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+        x = self.conv5(x)
+        x = nn.functional.adaptive_avg_pool2d(x, 1).reshape(x.size(0), -1)
+        x = self.fc(x)
+        return x
+    def _make_stage(self, inp, out, repeats):
+            layers = [InvertedResidual(inp, out, 2)]
+            for i in range(1,repeats):
+                layers.append(InvertedResidual(inp,out, 1))
+            return nn.Sequential(*layers)
+
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
     # Pad to 'same' shape outputs

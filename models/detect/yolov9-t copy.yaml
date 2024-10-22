@@ -1,0 +1,78 @@
+# YOLOv9 with ShuffleNet-style backbone
+
+# parameters
+nc: 80  # number of classes
+depth_multiple: 1.0  # model depth multiple
+width_multiple: 1.0  # layer channel multiple
+
+# anchors
+anchors: 3
+
+# ShuffleNet-style backbone
+backbone:
+  [
+   [-1, 1, conv_bn_relu_maxpool, [3, 16]],  # 0-P1/4
+   [-1, 1, InvertedResidual, [16, 32, 2]],  # 1-P2/8
+   [-1, 3, InvertedResidual, [32, 32, 1]],  # 2
+   [-1, 1, InvertedResidual, [32, 64, 2]],  # 3-P3/16
+   [-1, 7, InvertedResidual, [64, 64, 1]],  # 4
+   [-1, 1, InvertedResidual, [64, 96, 2]],  # 5
+   [-1, 3, InvertedResidual, [96, 96, 1]],  # 6
+   [-1, 1, InvertedResidual, [96, 128, 1]],  # 7-P4/32
+
+  ]
+
+# Original YOLOv9 head (unchanged)
+head:
+  [
+   # elan-spp block
+   [-1, 1, SPPELAN, [128, 64]],  # 8
+
+   # up-concat merge
+   [-1, 1, nn.Upsample, [None, 2, 'nearest']], #9
+   [[-1, 6], 1, Concat, [1]],  # cat backbone P4 10
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [96, 96, 48, 3]],  # 11
+
+   # up-concat merge
+   [-1, 1, nn.Upsample, [None, 2, 'nearest']], #12
+   [[-1, 4], 1, Concat, [1]],  # cat backbone P3 #13
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [64, 64, 32, 3]],  # 14
+
+   # avg-conv-down merge
+   [-1, 1, AConv, [48]], #15
+   [[-1, 12], 1, Concat, [1]],  # cat head P416
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [96, 96, 48, 3]],  # 17 (P4/16-medium)
+
+   # avg-conv-down merge
+   [-1, 1, AConv, [64]], #18
+   [[-1, 9], 1, Concat, [1]],  # cat head P5 19
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [128, 128, 64, 3]],  # 20 (P5/32-large)
+   
+   # elan-spp block
+   [8, 1, SPPELAN, [128, 64]],  # 21
+
+   # up-concat merge
+   [-1, 1, nn.Upsample, [None, 2, 'nearest']], #22
+   [[-1, 6], 1, Concat, [1]],  # cat backbone P4 #23
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [96, 96, 48, 3]],  # 24
+
+   # up-concat merge
+   [-1, 1, nn.Upsample, [None, 2, 'nearest']], #25
+   [[-1, 4], 1, Concat, [1]],  # cat backbone P3 36
+
+   # elan-2 block
+   [-1, 1, RepNCSPELAN4, [64, 64, 32, 3]],  # 27
+
+   # detect
+   [[27, 24, 21, 14, 17, 20], 1, DualDDetect, [nc]],  # Detect(P3, P4, P5)
+  ]

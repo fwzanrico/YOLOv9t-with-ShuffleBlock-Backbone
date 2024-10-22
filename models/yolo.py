@@ -730,7 +730,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in {
-            Conv, AConv, ConvTranspose, 
+            Conv, AConv, ConvTranspose, conv_bn_relu_maxpool, InvertedResidual,
             Bottleneck, SPP, SPPF, DWConv, BottleneckCSP, nn.ConvTranspose2d, DWConvTranspose2d, SPPCSPC, ADown,
             ELAN1, RepNCSPELAN4, SPPELAN}:
             c1, c2 = ch[f], args[0]
